@@ -1,0 +1,18 @@
+services:
+  anc-watch:
+    build: .
+    image: anc-watch:latest
+    container_name: anc-watch
+    restart: always
+    env_file:
+      - .env
+    environment:
+      # state lives on the named volume below; survives restarts so the
+      # "solved!" alert is sent exactly once
+      STATE_FILE: /data/state.json
+    volumes:
+      - anc-state:/data
+    # loop mode is the image default (CMD ["--loop"]); CHECK_INTERVAL comes from .env
+
+volumes:
+  anc-state:
