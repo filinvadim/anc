@@ -483,6 +483,37 @@ def record_failure(err: Exception, dry_run: bool = False) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Loop scheduling
+# --------------------------------------------------------------------------- #
+def sleep_until_next_check(interval: int) -> None:
+    """Wait `interval` seconds before the next cycle, against a WALL-CLOCK
+    deadline, emitting a periodic heartbeat.
+
+    Not just ``time.sleep(interval)`` for two reasons:
+      * A single multi-hour sleep prints nothing, so a healthy watcher looks
+        frozen in ``docker logs`` — the heartbeat proves it is alive and shows
+        when the next check fires.
+      * ``time.sleep`` counts CLOCK_MONOTONIC, which is *frozen while the host
+        is suspended*. On a laptop/desktop that sleeps overnight a "24h" wait
+        silently stretches to 30h+ and the daily mail drifts or appears to
+        stop. ``time.time()`` (wall clock) keeps the schedule honest: if the
+        deadline already passed during a suspend, we fire immediately.
+    """
+    deadline = time.time() + interval
+    next_at = (dt.datetime.now() + dt.timedelta(seconds=interval)).strftime("%Y-%m-%d %H:%M:%S")
+    log.info("sleeping %d s, next check ~%s", interval, next_at)
+    beat = max(1, min(int(os.environ.get("HEARTBEAT_INTERVAL", "3600")), interval))
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return
+        time.sleep(min(beat, remaining))
+        remaining = deadline - time.time()
+        if remaining > 0:
+            log.info("…still alive, %d s until next check", int(round(remaining)))
+
+
+# --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
 def main() -> int:
@@ -517,8 +548,7 @@ def main() -> int:
                  DOSSIER, ARTICLE, YEAR, CHECK_INTERVAL, ALERT_TO)
         while True:
             cycle()
-            log.info("sleeping %d s until next check", CHECK_INTERVAL)
-            time.sleep(CHECK_INTERVAL)
+            sleep_until_next_check(CHECK_INTERVAL)
     else:
         cycle()
     return 0
