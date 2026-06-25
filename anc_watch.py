@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import smtplib
+import socket
 import ssl
 import sys
 import time
@@ -59,6 +60,9 @@ USER_AGENT = os.environ.get(
 
 STATE_FILE = Path(os.environ.get("STATE_FILE", "/data/state.json"))
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "86400"))  # seconds (loop mode)
+# After a FAILED cycle, retry this soon instead of waiting the full interval, so a
+# transient network blip costs minutes — not a whole day. Capped at CHECK_INTERVAL.
+RETRY_INTERVAL = min(int(os.environ.get("RETRY_INTERVAL", "1800")), CHECK_INTERVAL)
 
 HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "60"))
 HTTP_RETRIES = int(os.environ.get("HTTP_RETRIES", "4"))
@@ -81,6 +85,52 @@ NOTIFY_ON_ERROR = os.environ.get("NOTIFY_ON_ERROR", "1") not in ("0", "false", "
 CHALLENGE_MARKERS = (b"Verifying your browser", b"Activati JavaScript")
 
 log = logging.getLogger("anc-watch")
+
+
+# --------------------------------------------------------------------------- #
+# Network resolver: force IPv4 + optional static host→IP pin
+# --------------------------------------------------------------------------- #
+# This host's Docker bridge has only a link-local IPv6 address and no global IPv6
+# route, so any AAAA result makes connect() fail instantly with
+# "[Errno 101] Network is unreachable" — that broke both the HTTPS scrape and the
+# SMTP alert. We patch socket.getaddrinfo so urllib AND smtplib only ever see
+# IPv4, and (optionally) pin a hostname straight to an IPv4, skipping DNS. TLS
+# SNI, certificate validation and the HTTP Host header keep using the real
+# hostname — only the address we connect() to changes, so HTTPS stays valid.
+FORCE_IPV4 = os.environ.get("ANC_FORCE_IPV4", "1") not in ("0", "false", "False", "")
+# "host=ip[,host2=ip2]" — pin a hostname to a fixed IPv4 (bypasses DNS entirely).
+# Defaults to pinning the target site; set ANC_HOST_IP="" to fall back to DNS,
+# and update the IP here / via .env if the site ever moves.
+HOST_IP_PINS: dict[str, str] = {}
+for _pair in os.environ.get("ANC_HOST_IP", "cetatenie.just.ro=193.151.29.21").split(","):
+    _pair = _pair.strip()
+    if "=" in _pair:
+        _h, _ip = _pair.split("=", 1)
+        if _h.strip() and _ip.strip():
+            HOST_IP_PINS[_h.strip()] = _ip.strip()
+
+_orig_getaddrinfo = socket.getaddrinfo
+
+
+def _ipv4_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    if family in (0, socket.AF_INET):
+        pinned = HOST_IP_PINS.get(host)
+        if pinned:
+            return [(socket.AF_INET, type or socket.SOCK_STREAM, proto, "", (pinned, port))]
+    res = _orig_getaddrinfo(host, port, family, type, proto, flags)
+    if FORCE_IPV4 and family in (0, socket.AF_INET):
+        v4 = [r for r in res if r[0] == socket.AF_INET]
+        if v4:
+            return v4
+    return res
+
+
+def install_ipv4_resolver() -> None:
+    """Patch socket.getaddrinfo process-wide (urllib + smtplib both honour it)."""
+    if FORCE_IPV4 or HOST_IP_PINS:
+        socket.getaddrinfo = _ipv4_getaddrinfo
+        log.info("IPv4-only resolver installed (force_ipv4=%s, pins=%s)",
+                 FORCE_IPV4, HOST_IP_PINS or "none")
 
 
 # --------------------------------------------------------------------------- #
@@ -529,26 +579,33 @@ def main() -> int:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    install_ipv4_resolver()
+
     dry = args.dry_run or not SMTP_HOST
     if dry and not args.dry_run:
         log.warning("SMTP_HOST not set — running in DRY-RUN mode (e-mails will only be logged)")
 
-    def cycle() -> None:
+    def cycle() -> bool:
         try:
             run_once(dry_run=dry)
+            return True
         except Exception as e:
             log.exception("check cycle failed: %s", e)
             try:
                 record_failure(e, dry_run=dry)
             except Exception:
                 log.exception("could not record failure")
+            return False
 
     if args.loop or (not args.once):  # default is loop (Docker long-running service)
-        log.info("watcher started: dossier=%s art=%s year=%s interval=%ds to=%s",
-                 DOSSIER, ARTICLE, YEAR, CHECK_INTERVAL, ALERT_TO)
+        log.info("watcher started: dossier=%s art=%s year=%s interval=%ds retry=%ds to=%s",
+                 DOSSIER, ARTICLE, YEAR, CHECK_INTERVAL, RETRY_INTERVAL, ALERT_TO)
         while True:
-            cycle()
-            sleep_until_next_check(CHECK_INTERVAL)
+            ok = cycle()
+            interval = CHECK_INTERVAL if ok else RETRY_INTERVAL
+            if not ok and RETRY_INTERVAL < CHECK_INTERVAL:
+                log.info("cycle failed — retrying in %d s (not the full %d s)", interval, CHECK_INTERVAL)
+            sleep_until_next_check(interval)
     else:
         cycle()
     return 0
