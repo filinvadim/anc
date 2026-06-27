@@ -71,8 +71,8 @@ ERROR_THRESHOLD = int(os.environ.get("ERROR_THRESHOLD", "3"))  # consecutive fai
 
 # --- e-mail / SMTP ---
 ALERT_TO = os.environ.get("ALERT_TO", "contact@warpnet.site").strip()
-ALERT_FROM = os.environ.get("ALERT_FROM", "").strip()
-SMTP_HOST = os.environ.get("SMTP_HOST", "").strip()
+ALERT_FROM = os.environ.get("ALERT_FROM", "vadimfilin45@gmail.com").strip()
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com").strip()
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_SECURITY = os.environ.get("SMTP_SECURITY", "starttls").strip().lower()  # starttls|ssl|none
 SMTP_USER = os.environ.get("SMTP_USER", "vadimfilin45@gmail.com").strip()
