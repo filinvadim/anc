@@ -58,7 +58,7 @@ USER_AGENT = os.environ.get(
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
 )
 
-STATE_FILE = Path(os.environ.get("STATE_FILE", "/data/state.json"))
+STATE_FILE = Path(os.environ.get("STATE_FILE", "./state.json"))
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "86400"))  # seconds (loop mode)
 # After a FAILED cycle, retry this soon instead of waiting the full interval, so a
 # transient network blip costs minutes — not a whole day. Capped at CHECK_INTERVAL.
