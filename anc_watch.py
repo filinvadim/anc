@@ -79,7 +79,7 @@ SMTP_USER = os.environ.get("SMTP_USER", "vadimfilin45@gmail.com").strip()
 SMTP_PASS = os.environ.get("SMTP_PASS", "")
 
 NOTIFY_ON_START = os.environ.get("NOTIFY_ON_START", "1") not in ("0", "false", "False", "")
-ALWAYS_NOTIFY = os.environ.get("ALWAYS_NOTIFY", "0") not in ("0", "false", "False", "")
+ALWAYS_NOTIFY = os.environ.get("ALWAYS_NOTIFY", "1") not in ("0", "false", "False", "")
 NOTIFY_ON_ERROR = os.environ.get("NOTIFY_ON_ERROR", "1") not in ("0", "false", "False", "")
 
 CHALLENGE_MARKERS = (b"Verifying your browser", b"Activati JavaScript")
